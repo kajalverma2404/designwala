@@ -11,7 +11,7 @@ type HistoryEntry = {
   thumbnail: string | null;
 };
 
-function resizeForStorage(dataUrl: string, maxWidth: number): Promise<string> {
+function resizeForStorage(dataUrl: string, maxWidth: number, quality = 0.7): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -20,9 +20,9 @@ function resizeForStorage(dataUrl: string, maxWidth: number): Promise<string> {
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
       canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.7));
+      resolve(canvas.toDataURL("image/jpeg", quality));
     };
-    img.onerror = () => resolve(dataUrl); // fallback to original if decode fails
+    img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
 }
@@ -103,13 +103,14 @@ export default function DesignPage() {
     setError(null);
 
     try {
-      const base64 = preview.split(",")[1];
-      const mimeType = file.type as "image/jpeg" | "image/png" | "image/webp";
+      // Compress to max 1280px / 85% quality before sending — keeps payload under Vercel's 4.5 MB limit
+      const compressed = await resizeForStorage(preview, 1280, 0.85);
+      const base64 = compressed.split(",")[1];
 
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64, mimeType, roomType, budget: maxBudget }),
+        body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", roomType, budget: maxBudget }),
       });
 
       if (!response.ok) {
