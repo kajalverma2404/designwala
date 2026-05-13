@@ -17,6 +17,16 @@ interface VizEntry {
   dataUrl: string | null;
 }
 
+interface DesignItem {
+  name: string;
+  description: string;
+}
+
+interface DesignCategory {
+  category: string;
+  items: DesignItem[];
+}
+
 // Short display names + emojis for the mobile bottom tab bar
 const MOBILE_TAB_META = [
   { emoji: "🪔", short: "Indian" },
@@ -68,6 +78,9 @@ export default function ResultsPage() {
     { state: "idle", dataUrl: null },
     { state: "idle", dataUrl: null },
   ]);
+  // Per-style item identification from the AI visualization
+  const [identifiedItems, setIdentifiedItems] = useState<Record<number, DesignCategory[]>>({});
+  const [identifying, setIdentifying] = useState<Record<number, boolean>>({});
 
   // Track whether history has been saved (once per page load)
   const historySaved = useRef(false);
@@ -138,6 +151,32 @@ export default function ResultsPage() {
     []
   );
 
+  const fetchIdentify = useCallback(
+    async (index: number, dataUrl: string) => {
+      setIdentifying((prev) => ({ ...prev, [index]: true }));
+      try {
+        const base64 = dataUrl.split(",")[1];
+        const res = await fetch("/api/identify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageBase64: base64,
+            mimeType: "image/png",
+            styleName: analysis?.styles[index]?.name,
+          }),
+        });
+        if (!res.ok) throw new Error("API error");
+        const data = await res.json();
+        setIdentifiedItems((prev) => ({ ...prev, [index]: data.categories }));
+      } catch {
+        // Best-effort enhancement — fail silently
+      } finally {
+        setIdentifying((prev) => ({ ...prev, [index]: false }));
+      }
+    },
+    [analysis]
+  );
+
   // Trigger visualization when style becomes active and hasn't been fetched yet
   useEffect(() => {
     if (!analysis || !roomImage) return;
@@ -145,6 +184,19 @@ export default function ResultsPage() {
       fetchViz(activeStyle, analysis.styles, roomImage);
     }
   }, [activeStyle, analysis, roomImage, viz, fetchViz]);
+
+  // Auto-identify items once the visualization for a style is ready
+  useEffect(() => {
+    const vEntry = viz[activeStyle];
+    if (
+      vEntry.state === "done" &&
+      vEntry.dataUrl &&
+      !identifiedItems[activeStyle] &&
+      !identifying[activeStyle]
+    ) {
+      fetchIdentify(activeStyle, vEntry.dataUrl);
+    }
+  }, [activeStyle, viz, identifiedItems, identifying, fetchIdentify]);
 
   const handleReselect = useCallback(async () => {
     if (!analysis) return;
@@ -511,6 +563,75 @@ export default function ResultsPage() {
                 </div>
               )}
             </div>
+
+            {/* What's in this Design — item identification from AI visualization */}
+            {(identifiedItems[activeStyle] || identifying[activeStyle]) && (
+              <div className="mb-6 rounded-2xl border border-gray-100 shadow-sm bg-white overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm">
+                      What&apos;s in this Design · इस डिज़ाइन में क्या है?
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      AI-detected items from your visualization — click to search online
+                    </p>
+                  </div>
+                  {identifying[activeStyle] && (
+                    <span className="flicker text-lg">🪔</span>
+                  )}
+                </div>
+
+                {identifying[activeStyle] && !identifiedItems[activeStyle] && (
+                  <div className="p-4 space-y-4">
+                    {[70, 55, 80].map((w, i) => (
+                      <div key={i} className="space-y-1.5">
+                        <div className={`shimmer h-3 rounded-full w-1/4`} />
+                        <div className={`shimmer h-4 rounded-full`} style={{ width: `${w}%` }} />
+                        <div className="shimmer h-3 rounded-full w-3/4" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {identifiedItems[activeStyle] && (
+                  <div className="divide-y divide-gray-50">
+                    {identifiedItems[activeStyle].map((cat) => (
+                      <div key={cat.category} className="px-4 py-3">
+                        <p className="text-xs font-bold text-[#FF9933] uppercase tracking-wide mb-3">
+                          {cat.category}
+                        </p>
+                        <div className="space-y-3">
+                          {cat.items.map((item) => (
+                            <div
+                              key={item.name}
+                              className="flex items-start gap-3"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 leading-snug">
+                                  {item.name}
+                                </p>
+                                <p className="text-xs text-gray-500 leading-relaxed mt-0.5">
+                                  {item.description}
+                                </p>
+                              </div>
+                              <a
+                                href={`https://www.amazon.in/s?k=${encodeURIComponent(item.name)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="shrink-0 inline-flex items-center gap-1 text-xs bg-[#FF9900] hover:bg-[#e68a00] text-white font-bold px-2.5 py-1.5 rounded-lg transition-colors"
+                              >
+                                <span>↗</span>
+                                <span>Amazon</span>
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Product grid header */}
             <div className="flex items-center justify-between mb-4">
